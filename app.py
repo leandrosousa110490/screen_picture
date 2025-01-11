@@ -3,10 +3,16 @@ import os
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QListWidget, QListWidgetItem, QTextEdit, 
-                            QPushButton, QLabel, QScrollArea, QSplitter)
-from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal
-from PyQt6.QtGui import QPixmap, QScreen, QPainter
+                            QPushButton, QLabel, QScrollArea, QSplitter, QComboBox,
+                            QMenuBar, QMenu, QFileDialog, QMessageBox)
+from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal, QTimer
+from PyQt6.QtGui import QPixmap, QScreen, QPainter, QAction
 from pynput import mouse
+from docx import Document
+from docx.shared import Inches
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+import tempfile
 
 class ScreenshotManager(QMainWindow):
     screenshot_taken = pyqtSignal(QPixmap)
@@ -17,9 +23,18 @@ class ScreenshotManager(QMainWindow):
         self.screenshots = []
         self.is_recording = False
         self.mouse_listener = None
-        self.capture_width = 800  # Increased capture width
-        self.capture_height = 600  # Increased capture height
+        self.capture_width = 800
+        self.capture_height = 600
+        self.current_screen = None
+        self.preview_timer = QTimer()
+        self.preview_timer.timeout.connect(self.update_live_preview)
+        self.preview_timer.start(100)  # Update every 100ms
+        self.current_screenshot_index = None  # Track current screenshot index
         self.initUI()
+        self.createMenuBar()
+        
+        # Disable record button by default since no screen is selected
+        self.record_button.setEnabled(False)
         
         self.screenshot_taken.connect(self.add_screenshot)
         
@@ -35,19 +50,33 @@ class ScreenshotManager(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         
-        # Control buttons
+        # Control buttons and screen selection
         control_layout = QHBoxLayout()
         self.record_button = QPushButton("Start Recording")
         self.record_button.clicked.connect(self.toggle_recording)
-        self.screen_label = QLabel("Current Screen: Auto-detect")
+        
+        # Screen selection combo box
+        self.screen_combo = QComboBox()
+        self.screen_combo.addItem("None")
+        for i, screen in enumerate(QApplication.screens()):
+            self.screen_combo.addItem(f"Screen {i + 1}")
+        self.screen_combo.currentIndexChanged.connect(self.screen_selected)
         
         control_layout.addWidget(self.record_button)
-        control_layout.addWidget(self.screen_label)
+        control_layout.addWidget(QLabel("Select Screen:"))
+        control_layout.addWidget(self.screen_combo)
         left_layout.addLayout(control_layout)
+        
+        # Live preview
+        self.live_preview_label = QLabel("Live Preview")
+        self.live_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.live_preview_label.setMinimumSize(400, 300)
+        left_layout.addWidget(self.live_preview_label)
         
         # Screenshot list
         self.list_widget = QListWidget()
         self.list_widget.itemClicked.connect(self.show_screenshots)
+        self.list_widget.itemSelectionChanged.connect(self.on_selection_changed)
         left_layout.addWidget(QLabel("Screenshots:"))
         left_layout.addWidget(self.list_widget)
         
@@ -78,7 +107,37 @@ class ScreenshotManager(QMainWindow):
         
         self.setGeometry(100, 100, 1600, 1000)  # Larger window
         
+    def screen_selected(self, index):
+        if index == 0:  # None selected
+            self.current_screen = None
+            self.record_button.setEnabled(False)
+            self.live_preview_label.clear()
+            self.live_preview_label.setText("Live Preview")
+        else:
+            self.current_screen = QApplication.screens()[index - 1]
+            self.record_button.setEnabled(True)
+    
+    def update_live_preview(self):
+        if self.current_screen and not self.is_recording:
+            screen_geo = self.current_screen.geometry()
+            preview = self.current_screen.grabWindow(
+                0,
+                screen_geo.x(),
+                screen_geo.y(),
+                screen_geo.width(),
+                screen_geo.height()
+            )
+            # Scale the preview to fit the label while maintaining aspect ratio
+            scaled_preview = preview.scaled(
+                self.live_preview_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.live_preview_label.setPixmap(scaled_preview)
+    
     def toggle_recording(self):
+        if not self.current_screen:
+            return
         if not self.is_recording:
             self.is_recording = True
             self.record_button.setText("Stop Recording")
@@ -107,12 +166,11 @@ class ScreenshotManager(QMainWindow):
     
     def _handle_click(self, x, y, button, pressed):
         if button == mouse.Button.left and pressed and self.is_recording:
-            screen, screen_geo = self.get_screen_at_position(x, y)
+            screen_geo = self.current_screen.geometry()
+            point = QPoint(x, y)
             
-            if screen:
-                # Update screen label
-                screen_index = QApplication.screens().index(screen)
-                self.screen_label.setText(f"Current Screen: {screen_index + 1}")
+            if screen_geo.contains(point):
+
                 
                 # Calculate capture region centered on click
                 half_width = self.capture_width // 2
@@ -140,8 +198,8 @@ class ScreenshotManager(QMainWindow):
                 if region.bottom() > screen_geo.height():
                     region.moveBottom(screen_geo.height())
                 
-                # Capture screenshot
-                pixmap = screen.grabWindow(
+                # Capture screenshot using self.current_screen instead of screen
+                pixmap = self.current_screen.grabWindow(
                     0,
                     region.x() + screen_geo.x(),
                     region.y() + screen_geo.y(),
@@ -163,6 +221,19 @@ class ScreenshotManager(QMainWindow):
         self.list_widget.addItem(timestamp)
         self.list_widget.setCurrentRow(self.list_widget.count() - 1)
         self.show_screenshots(self.list_widget.currentItem())
+        
+    def on_selection_changed(self):
+        # Save current notes before changing selection
+        if self.current_screenshot_index is not None:
+            self.save_current_notes()
+        
+        # Update for new selection
+        selected_items = self.list_widget.selectedItems()
+        if selected_items:
+            self.show_screenshots(selected_items[0])
+        else:
+            self.notes_edit.clear()
+            self.current_screenshot_index = None
     
     def show_screenshots(self, current_item=None):
         # Clear existing previews
@@ -171,47 +242,167 @@ class ScreenshotManager(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
         
-        # Show all screenshots up to and including the selected one
+        # Show only the selected screenshot
         if current_item:
             current_index = self.list_widget.row(current_item)
+            self.current_screenshot_index = current_index  # Update current index
+            screenshot = self.screenshots[current_index]
             
-            for i in range(current_index + 1):
-                screenshot = self.screenshots[i]
-                preview_label = QLabel()
-                preview_label.setPixmap(screenshot['pixmap'])
-                preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.preview_layout.addWidget(preview_label)
-                
-                # Add timestamp label
-                timestamp_label = QLabel(f"Screenshot {screenshot['timestamp']}")
-                timestamp_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.preview_layout.addWidget(timestamp_label)
-                
-                # Add spacing between screenshots
-                spacer = QLabel()
-                spacer.setFixedHeight(20)
-                self.preview_layout.addWidget(spacer)
+            # Create and configure preview label
+            preview_label = QLabel()
+            preview_label.setPixmap(screenshot['pixmap'])
+            preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Scale the preview to fit the scroll area while maintaining aspect ratio
+            scaled_pixmap = screenshot['pixmap'].scaled(
+                self.preview_scroll.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            preview_label.setPixmap(scaled_pixmap)
+            self.preview_layout.addWidget(preview_label)
+            
+            # Add timestamp label
+            timestamp_label = QLabel(f"Screenshot {screenshot['timestamp']}")
+            timestamp_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.preview_layout.addWidget(timestamp_label)
+            
+            # Update notes
+            self.notes_edit.setText(screenshot['notes'])
+        else:
+            self.current_screenshot_index = None
+            self.notes_edit.clear()
         
         # Add stretch at the end
         self.preview_layout.addStretch()
-        
-        # Update notes for the current screenshot
-        if current_item:
-            current_index = self.list_widget.row(current_item)
-            self.notes_edit.setText(self.screenshots[current_index]['notes'])
-            try:
-                self.notes_edit.textChanged.disconnect()
-            except:
-                pass
-            self.notes_edit.textChanged.connect(lambda: self.update_notes(current_index))
+
     
+    def save_current_notes(self):
+        """Save notes for the current screenshot."""
+        if self.current_screenshot_index is not None:
+            current_notes = self.notes_edit.toPlainText()
+            self.screenshots[self.current_screenshot_index]['notes'] = current_notes
+            
+            # Update list item to show note indicator
+            list_item = self.list_widget.item(self.current_screenshot_index)
+            if list_item:
+                timestamp = self.screenshots[self.current_screenshot_index]['timestamp']
+                list_item.setText(f"{timestamp} {'📝' if current_notes else ''}")
+
     def update_notes(self, index):
-        self.screenshots[index]['notes'] = self.notes_edit.toPlainText()
+        """Update notes in real-time."""
+        if 0 <= index < len(self.screenshots):
+            current_notes = self.notes_edit.toPlainText()
+            self.screenshots[index]['notes'] = current_notes
+            
+            # Update list item to show note indicator
+            list_item = self.list_widget.item(index)
+            if list_item:
+                timestamp = self.screenshots[index]['timestamp']
+                list_item.setText(f"{timestamp} {'📝' if current_notes else ''}")
     
     def closeEvent(self, event):
         if self.mouse_listener:
             self.mouse_listener.stop()
         event.accept()
+
+    def createMenuBar(self):
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu('File')
+        
+        # Export as Word
+        export_word_action = QAction('Export as Word', self)
+        export_word_action.triggered.connect(self.export_as_word)
+        file_menu.addAction(export_word_action)
+        
+        # Export as PDF
+        export_pdf_action = QAction('Export as PDF', self)
+        export_pdf_action.triggered.connect(self.export_as_pdf)
+        file_menu.addAction(export_pdf_action)
+
+    def export_as_word(self):
+        if not self.screenshots:
+            QMessageBox.warning(self, "Warning", "No screenshots to export!")
+            return
+            
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Word Document", "", 
+                                                 "Word Documents (*.docx)")
+        if file_name:
+            doc = Document()
+            doc.add_heading('Screenshot Report', 0)
+            
+            for screenshot in self.screenshots:
+                # Save screenshot to temporary file
+                temp_image = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                screenshot['pixmap'].save(temp_image.name, 'PNG')
+                
+                # Add timestamp
+                doc.add_heading(f"Screenshot {screenshot['timestamp']}", level=1)
+                
+                # Add image
+                doc.add_picture(temp_image.name, width=Inches(6))
+                
+                # Add notes
+                if screenshot['notes']:
+                    doc.add_paragraph(screenshot['notes'])
+                
+                doc.add_paragraph('\n')  # Add spacing
+                
+                # Clean up temp file
+                temp_image.close()
+                os.unlink(temp_image.name)
+            
+            try:
+                doc.save(file_name)
+                QMessageBox.information(self, "Success", "Document exported successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save document: {str(e)}")
+
+    def export_as_pdf(self):
+        if not self.screenshots:
+            QMessageBox.warning(self, "Warning", "No screenshots to export!")
+            return
+            
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save PDF Document", "", 
+                                                 "PDF Documents (*.pdf)")
+        if file_name:
+            try:
+                c = canvas.Canvas(file_name, pagesize=letter)
+                width, height = letter
+                
+                for i, screenshot in enumerate(self.screenshots):
+                    if i > 0:
+                        c.showPage()  # New page for each screenshot
+                    
+                    # Save screenshot to temporary file
+                    temp_image = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                    screenshot['pixmap'].save(temp_image.name, 'PNG')
+                    
+                    # Add timestamp
+                    c.setFont("Helvetica-Bold", 14)
+                    c.drawString(50, height - 50, f"Screenshot {screenshot['timestamp']}")
+                    
+                    # Add image
+                    c.drawImage(temp_image.name, 50, height - 400, width=500, preserveAspectRatio=True)
+                    
+                    # Add notes
+                    if screenshot['notes']:
+                        c.setFont("Helvetica", 12)
+                        # Split notes into lines to avoid text overflow
+                        y_position = height - 450
+                        for line in screenshot['notes'].split('\n'):
+                            if y_position > 50:  # Ensure we don't write below page
+                                c.drawString(50, y_position, line)
+                                y_position -= 15
+                    
+                    # Clean up temp file
+                    temp_image.close()
+                    os.unlink(temp_image.name)
+                
+                c.save()
+                QMessageBox.information(self, "Success", "PDF exported successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save PDF: {str(e)}")
 
 def main():
     app = QApplication(sys.argv)
