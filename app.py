@@ -77,6 +77,8 @@ class ScreenshotManager(QMainWindow):
         self.list_widget = QListWidget()
         self.list_widget.itemClicked.connect(self.show_screenshots)
         self.list_widget.itemSelectionChanged.connect(self.on_selection_changed)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
         left_layout.addWidget(QLabel("Screenshots:"))
         left_layout.addWidget(self.list_widget)
         
@@ -224,7 +226,7 @@ class ScreenshotManager(QMainWindow):
         
     def on_selection_changed(self):
         # Save current notes before changing selection
-        if self.current_screenshot_index is not None:
+        if self.current_screenshot_index is not None and self.current_screenshot_index < len(self.screenshots):
             self.save_current_notes()
         
         # Update for new selection
@@ -279,7 +281,8 @@ class ScreenshotManager(QMainWindow):
     
     def save_current_notes(self):
         """Save notes for the current screenshot."""
-        if self.current_screenshot_index is not None:
+        if (self.current_screenshot_index is not None and 
+            0 <= self.current_screenshot_index < len(self.screenshots)):
             current_notes = self.notes_edit.toPlainText()
             self.screenshots[self.current_screenshot_index]['notes'] = current_notes
             
@@ -403,6 +406,52 @@ class ScreenshotManager(QMainWindow):
                 QMessageBox.information(self, "Success", "PDF exported successfully!")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save PDF: {str(e)}")
+
+    def show_context_menu(self, position):
+        menu = QMenu()
+        delete_action = menu.addAction("Delete Screenshot")
+        
+        # Get the item at the position
+        item = self.list_widget.itemAt(position)
+        
+        if item is not None:
+            action = menu.exec(self.list_widget.mapToGlobal(position))
+            if action == delete_action:
+                self.delete_screenshot(self.list_widget.row(item))
+
+    def delete_screenshot(self, index):
+        reply = QMessageBox.question(
+            self,
+            'Delete Screenshot',
+            'Are you sure you want to delete this screenshot?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Clear current screenshot index if we're deleting the current screenshot
+            if self.current_screenshot_index == index:
+                self.current_screenshot_index = None
+            
+            # Remove from data structures
+            self.screenshots.pop(index)
+            # Remove from list widget
+            self.list_widget.takeItem(index)
+            
+            # Clear preview if no screenshots left
+            if not self.screenshots:
+                while self.preview_layout.count():
+                    item = self.preview_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
+                self.notes_edit.clear()
+                self.current_screenshot_index = None
+            else:
+                # Show the previous screenshot if available
+                new_index = min(index, len(self.screenshots) - 1)
+                self.list_widget.setCurrentRow(new_index)
+                self.show_screenshots(self.list_widget.item(new_index))
+                self.current_screenshot_index = new_index
 
 def main():
     app = QApplication(sys.argv)
