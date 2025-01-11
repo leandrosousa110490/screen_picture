@@ -332,22 +332,22 @@ class ScreenshotManager(QMainWindow):
                                                  "Word Documents (*.docx)")
         if file_name:
             doc = Document()
-            doc.add_heading('Screenshot Report', 0)
+            doc.add_heading('SOG', 0)
             
-            for screenshot in self.screenshots:
+            for i, screenshot in enumerate(self.screenshots):
                 # Save screenshot to temporary file
                 temp_image = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
                 screenshot['pixmap'].save(temp_image.name, 'PNG')
                 
-                # Add timestamp
-                doc.add_heading(f"Screenshot {screenshot['timestamp']}", level=1)
+                # Add image number instead of timestamp
+                doc.add_heading(f"Image {i + 1}", level=1)
                 
                 # Add image
                 doc.add_picture(temp_image.name, width=Inches(6))
                 
-                # Add notes
+                # Add notes with "Comment:" prefix
                 if screenshot['notes']:
-                    doc.add_paragraph(screenshot['notes'])
+                    doc.add_paragraph(f"Comment: {screenshot['notes']}")
                 
                 doc.add_paragraph('\n')  # Add spacing
                 
@@ -373,6 +373,10 @@ class ScreenshotManager(QMainWindow):
                 c = canvas.Canvas(file_name, pagesize=letter)
                 width, height = letter
                 
+                # Add title on first page
+                c.setFont("Helvetica-Bold", 24)
+                c.drawString(50, height - 50, "SOG")
+                
                 for i, screenshot in enumerate(self.screenshots):
                     if i > 0:
                         c.showPage()  # New page for each screenshot
@@ -381,18 +385,20 @@ class ScreenshotManager(QMainWindow):
                     temp_image = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
                     screenshot['pixmap'].save(temp_image.name, 'PNG')
                     
-                    # Add timestamp
+                    # Add image number
                     c.setFont("Helvetica-Bold", 14)
-                    c.drawString(50, height - 50, f"Screenshot {screenshot['timestamp']}")
+                    c.drawString(50, height - 50, f"Image {i + 1}")
                     
                     # Add image
                     c.drawImage(temp_image.name, 50, height - 400, width=500, preserveAspectRatio=True)
                     
-                    # Add notes
+                    # Add notes with "Comment:" prefix
                     if screenshot['notes']:
                         c.setFont("Helvetica", 12)
                         # Split notes into lines to avoid text overflow
                         y_position = height - 450
+                        c.drawString(50, y_position, "Comment:")
+                        y_position -= 20
                         for line in screenshot['notes'].split('\n'):
                             if y_position > 50:  # Ensure we don't write below page
                                 c.drawString(50, y_position, line)
