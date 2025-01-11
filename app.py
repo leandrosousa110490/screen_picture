@@ -339,8 +339,8 @@ class ScreenshotManager(QMainWindow):
                 temp_image = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
                 screenshot['pixmap'].save(temp_image.name, 'PNG')
                 
-                # Add image number instead of timestamp
-                doc.add_heading(f"Image {i + 1}", level=1)
+                # Add step number
+                doc.add_heading(f"Step {i + 1}", level=1)
                 
                 # Add image
                 doc.add_picture(temp_image.name, width=Inches(6))
@@ -387,7 +387,7 @@ class ScreenshotManager(QMainWindow):
                     
                     # Add image number
                     c.setFont("Helvetica-Bold", 14)
-                    c.drawString(50, height - 50, f"Image {i + 1}")
+                    c.drawString(50, height - 50, f"Step {i + 1}")
                     
                     # Add image
                     c.drawImage(temp_image.name, 50, height - 400, width=500, preserveAspectRatio=True)
