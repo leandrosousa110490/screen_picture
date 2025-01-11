@@ -120,10 +120,11 @@ class ScreenshotManager(QMainWindow):
     def update_live_preview(self):
         if self.current_screen and not self.is_recording:
             screen_geo = self.current_screen.geometry()
+            # Use WinId 0 for the entire desktop and adjust coordinates relative to the screen
             preview = self.current_screen.grabWindow(
                 0,
-                screen_geo.x(),
-                screen_geo.y(),
+                0,  # Relative to the screen
+                0,
                 screen_geo.width(),
                 screen_geo.height()
             )
@@ -170,8 +171,6 @@ class ScreenshotManager(QMainWindow):
             point = QPoint(x, y)
             
             if screen_geo.contains(point):
-
-                
                 # Calculate capture region centered on click
                 half_width = self.capture_width // 2
                 half_height = self.capture_height // 2
@@ -198,16 +197,17 @@ class ScreenshotManager(QMainWindow):
                 if region.bottom() > screen_geo.height():
                     region.moveBottom(screen_geo.height())
                 
-                # Capture screenshot using self.current_screen instead of screen
+                # Capture screenshot using coordinates relative to the screen
                 pixmap = self.current_screen.grabWindow(
                     0,
-                    region.x() + screen_geo.x(),
-                    region.y() + screen_geo.y(),
+                    region.x(),  # Use coordinates relative to the screen
+                    region.y(),
                     region.width(),
                     region.height()
                 )
                 
                 self.screenshot_taken.emit(pixmap)
+
     
     def add_screenshot(self, pixmap):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
